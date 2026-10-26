@@ -1,11 +1,10 @@
 name: Release
 
-# Cut a release by pushing a version tag, e.g. `just tag 1.1` (which pushes v1.1).
-# Plain pushes to main do nothing here.
+# Fallback only: releases are normally cut locally with `just release 1.1`.
+# To run this instead, push the tag yourself and start the workflow manually
+# from the Actions tab, choosing that tag (v1.1) as the ref.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write # needed to create the GitHub Release in THIS repo

@@ -95,6 +95,63 @@ tag version $notes="":
     git push origin "v$ver"
     echo "✓ Pushed v$ver — CI will build, release, and update the tap."
 
+# Release locally, without GitHub Actions: bump, build, tag, push, publish the
+# GitHub Release, and update the Homebrew cask in the tap. Needs gh (authed) and
+# push access to Guilospanck/homebrew-tap. Notes work like `just tag`.
+# Usage: just release 1.1
+#        just release 1.1 "Fixes the camera bubble."
+release version $notes="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ver="{{version}}"
+    if ! [[ "$ver" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "✗ version must look like 1.1 or 1.1.0 (got '$ver')" >&2; exit 1
+    fi
+    command -v gh >/dev/null || { echo "✗ install gh first: brew install gh" >&2; exit 1; }
+    gh auth status >/dev/null 2>&1 || { echo "✗ run: gh auth login" >&2; exit 1; }
+    if [[ -n "$(git status --porcelain)" ]]; then
+        echo "✗ working tree not clean — commit or stash first." >&2; exit 1
+    fi
+    if git rev-parse "v$ver" >/dev/null 2>&1; then
+        echo "✗ tag v$ver already exists." >&2; exit 1
+    fi
+    just lint
+    # Bump before building so the app bundle carries the new version.
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $ver" Resources/Info.plist
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $ver" Resources/Info.plist
+    just build || { git checkout -- Resources/Info.plist; echo "✗ build failed; version bump reverted." >&2; exit 1; }
+    zip="build/Goom-$ver.zip"
+    ditto -c -k --keepParent build/Goom.app "$zip"
+    sha="$(shasum -a 256 "$zip" | awk '{print $1}')"
+    git add Resources/Info.plist
+    git commit -m "Release v$ver"
+    if [[ -n "${notes//[[:space:]]/}" ]]; then
+        git tag -a "v$ver" --cleanup=verbatim -m "$notes"
+    else
+        git tag "v$ver"
+    fi
+    git push origin HEAD
+    git push origin "v$ver"
+    notes_args=()
+    if [[ -n "${notes//[[:space:]]/}" ]]; then notes_args=(--notes "$notes"); fi
+    gh release create "v$ver" "$zip" --title "v$ver" \
+        ${notes_args[@]+"${notes_args[@]}"} --generate-notes
+    # Update the cask in the tap.
+    tmp="$(mktemp -d)"
+    trap 'rm -rf -- "$tmp"' EXIT
+    gh repo clone Guilospanck/homebrew-tap "$tmp/tap"
+    mkdir -p "$tmp/tap/Casks"
+    ./scripts/render-cask.sh "$ver" "$sha" > "$tmp/tap/Casks/goom.rb"
+    cd "$tmp/tap"
+    git add Casks/goom.rb
+    if git diff --cached --quiet; then
+        echo "Cask already up to date; nothing to push."
+    else
+        git commit -m "goom $ver"
+        git push origin HEAD
+    fi
+    echo "✓ Released v$ver and updated the tap."
+
 # One-time: create a write-scoped deploy key for the tap and store its private
 # half as a secret in this repo, so CI can push the cask. Needs gh (authed).
 # Usage: just setup-tap-key
