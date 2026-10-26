@@ -1,0 +1,93 @@
+name: Release
+
+# Cut a release by pushing a version tag, e.g. `just tag 1.1` (which pushes v1.1).
+# Plain pushes to main do nothing here.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # needed to create the GitHub Release in THIS repo
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build .app bundle
+        run: ./scripts/build-app.sh
+
+      - name: Package zip + sha256
+        id: pkg
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.v.outputs.version }}"
+          ZIP="Goom-${VERSION}.zip"
+          ditto -c -k --keepParent build/Goom.app "$ZIP"
+          SHA="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Notes passed to `just tag` live in the annotated tag's message.
+          # Re-fetch the tag itself: checkout may have created it locally as a
+          # lightweight tag pointing at the commit, dropping the annotation.
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          notes_args=()
+          if [[ "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" == "tag" ]]; then
+            # --notes is prepended to the generated changelog.
+            notes_args=(--notes "$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")")
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            "${{ steps.pkg.outputs.zip }}" \
+            --title "$GITHUB_REF_NAME" \
+            ${notes_args[@]+"${notes_args[@]}"} \
+            --generate-notes
+
+      - name: Update Homebrew cask in tap
+        env:
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.v.outputs.version }}"
+          SHA="${{ steps.pkg.outputs.sha256 }}"
+
+          # Configure the deploy key for pushing to the tap over SSH.
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/tap_key
+          chmod 600 ~/.ssh/tap_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_key -o StrictHostKeyChecking=accept-new"
+
+          git clone git@github.com:Guilospanck/homebrew-tap.git tap
+          mkdir -p tap/Casks
+
+          # Regenerate the cask fresh each release from the shared renderer
+          # (same source `just tag` lints locally), so the file is owned by CI
+          # and can't drift from what was checked before tagging.
+          ./scripts/render-cask.sh "$VERSION" "$SHA" > tap/Casks/goom.rb
+
+          # Backstop: refuse to publish a cask Homebrew would complain about,
+          # in case a tag was pushed without going through `just tag`.
+          brew style tap/Casks/goom.rb
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/goom.rb
+          if git diff --cached --quiet; then
+            echo "Cask already up to date; nothing to push."
+          else
+            git commit -m "goom ${VERSION}"
+            git push origin HEAD
+          fi
