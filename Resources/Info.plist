@@ -14,6 +14,7 @@
     <key>NSHighResolutionCapable</key><true/>
     <key>LSUIElement</key><true/>
     <key>NSCameraUsageDescription</key><string>Goom shows your camera in a bubble while recording.</string>
+    <key>NSCameraUseContinuityCameraDeviceType</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>Goom records your voice with your screen recording.</string>
 </dict>
 </plist>
