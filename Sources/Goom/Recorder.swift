@@ -2,6 +2,19 @@ import AppKit
 import AVFoundation
 import ScreenCaptureKit
 
+struct ScreenInfo: Identifiable, Hashable {
+    let id: CGDirectDisplayID
+    let name: String
+
+    static func id(of screen: NSScreen) -> CGDirectDisplayID {
+        screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
+    }
+
+    static func all() -> [ScreenInfo] {
+        NSScreen.screens.map { ScreenInfo(id: id(of: $0), name: $0.localizedName) }
+    }
+}
+
 enum CaptureMode: String, CaseIterable, Identifiable {
     case display = "Screen", window = "Window", region = "Region"
     var id: String { rawValue }
@@ -21,6 +34,10 @@ final class Recorder: NSObject {
     var windows: [SCWindow] = []
     var selectedWindowID: CGWindowID?
     var region: RegionSelection?
+    /// Displays that can be recorded in `.display` mode; refreshed whenever the popup opens.
+    var screens: [ScreenInfo] = ScreenInfo.all()
+    /// nil = the main display. Reset to nil when the chosen display is unplugged.
+    var displayID: CGDirectDisplayID?
     var errorMessage: String?
     /// Bumped whenever a recording finishes so the library reloads.
     var libraryVersion = 0
@@ -99,6 +116,23 @@ final class Recorder: NSObject {
         if let id = selectedWindowID, !windows.contains(where: { $0.windowID == id }) { selectedWindowID = nil }
     }
 
+    func refreshScreens() {
+        screens = ScreenInfo.all()
+        if let id = displayID, !screens.contains(where: { $0.id == id }) { displayID = nil }
+    }
+
+    /// The screen being recorded, which is also where the countdown and bubble appear. Window mode keeps the
+    /// main display.
+    private var targetScreen: NSScreen? {
+        let id: CGDirectDisplayID? = switch mode {
+        case .display: displayID
+        case .region: region?.displayID
+        case .window: nil
+        }
+        if let id, let screen = NSScreen.screens.first(where: { ScreenInfo.id(of: $0) == id }) { return screen }
+        return NSScreen.main
+    }
+
     func refreshDevices() {
         cameras = CaptureDevice.cameras()
         microphones = CaptureDevice.microphones()
@@ -152,7 +186,7 @@ final class Recorder: NSObject {
                 self?.bubbleShape = shape
                 self?.bubbleSize = size
             }
-            if await !bubble.show(deviceID: cameraID, quality: cameraQuality, shape: bubbleShape, size: bubbleSize) {
+            if await !bubble.show(deviceID: cameraID, quality: cameraQuality, shape: bubbleShape, size: bubbleSize, screen: targetScreen) {
                 errorMessage = "Camera unavailable or denied; recording without it."
                 useCamera = false
             }
@@ -161,7 +195,7 @@ final class Recorder: NSObject {
         if showCountdown {
             for n in stride(from: 3, through: 1, by: -1) {
                 state = .countdown(n)
-                countdown.show(n, on: NSScreen.main)
+                countdown.show(n, on: targetScreen)
                 try? await Task.sleep(for: .seconds(1))
             }
             countdown.hide()
@@ -227,7 +261,7 @@ final class Recorder: NSObject {
 
     private func beginCapture() async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        let mainID = NSScreen.main?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+        let mainID = targetScreen.map(ScreenInfo.id(of:))
 
         func fail(_ msg: String) -> NSError {
             NSError(domain: "Goom", code: 1, userInfo: [NSLocalizedDescriptionKey: msg])

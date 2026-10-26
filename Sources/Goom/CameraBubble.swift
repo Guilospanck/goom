@@ -17,7 +17,7 @@ final class CameraBubble {
     var windowNumber: Int? { panel?.windowNumber }
     var frame: NSRect? { panel?.frame }
 
-    func show(deviceID: String?, quality: CameraQuality, shape: BubbleShape, size: BubbleSize) async -> Bool {
+    func show(deviceID: String?, quality: CameraQuality, shape: BubbleShape, size: BubbleSize, screen: NSScreen?) async -> Bool {
         guard await AVCaptureDevice.requestAccess(for: .video) else { return false }
 
         let device = deviceID.flatMap { AVCaptureDevice(uniqueID: $0) } ?? AVCaptureDevice.default(for: .video)
@@ -52,7 +52,7 @@ final class CameraBubble {
         panel.level = .floating
         panel.isMovableByWindowBackground = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        if let screen = NSScreen.main {
+        if let screen = screen ?? NSScreen.main {
             panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.minX + 24, y: screen.visibleFrame.minY + 24))
         }
         panel.orderFrontRegardless()
