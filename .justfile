@@ -20,6 +20,11 @@ install: build
     cp -R build/Goom.app /Applications/Goom.app
     open /Applications/Goom.app
 
+# Quit Goom and remove it from /Applications (recordings in ~/Movies/Goom are kept)
+uninstall:
+    -pkill -x Goom
+    rm -rf /Applications/Goom.app
+
 # Lint the Homebrew cask CI will publish (style + deprecation checks).
 lint:
     #!/usr/bin/env bash
