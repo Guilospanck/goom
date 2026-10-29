@@ -1,4 +1,6 @@
-# Goom
+<p align="center"><img src="Resources/AppIcon.png" alt="Goom icon" width="128" height="128"></p>
+
+<h1 align="center">Goom</h1>
 
 A small, local-first Loom-style screen recorder for macOS that lives in the menu bar. Record your screen, a window or a region with system audio, microphone and an optional camera bubble, and get a plain MP4 in `~/Movies/Goom`. No account, no cloud upload.
 
